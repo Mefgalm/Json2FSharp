@@ -4,7 +4,6 @@ open System
 open FParsec
 open Newtonsoft.Json.Linq
 
-//[<StructuredFormatDisplay("{StructuredFormatDisplay}")>]
 type Json = 
     | JBool
     | JBoolOption
@@ -22,11 +21,11 @@ type Json =
     | JArray of Json
     | JArrayOption of Json
 
-let ws   = spaces // eats any whitespace
+let ws = spaces 
 let str s = pstring s
 
 let stringLiteral =
-    let escape =  anyOf "\"\\/bfnrt"
+    let escape = anyOf "\"\\/bfnrt"
                   |>> function
                       | 'b' -> "\b"
                       | 'f' -> "\u000C"
@@ -87,23 +86,25 @@ let rec aggreagateListToSingleType jsonList =
     let isString = function JStringOption | JString -> true | _ -> false
     let isNumber = function JInt | JFloat| JIntOption | JFloatOption -> true | _ -> false
     let isNull = function JNull -> true | _ -> false
-    let isBool = function JBool -> true | _ -> false
+    let isBool = function JBool | JBoolOption -> true | _ -> false
     let isObject = function JObject _ | JObjectOption _ -> true | _ -> false
+
+    let isBoolOption = function JBoolOption -> true | _ -> false
     let isStringOption = function JStringOption -> true | _ -> false
     let isArrayOption = function JArrayOption _ -> true | _ -> false
     let isObjectOption = function JObjectOption _ -> true | _ -> false
     let isNumberOption = function JIntOption | JFloatOption -> true | _ -> false
-    let hasNull = List.exists isNull
     let typeOrder = 
         function 
         | JInt | JIntOption -> 1 
         | JFloat | JFloatOption -> 2
         | _ -> failwith "Not number type"
     
-    let checkStringOption = hasNull <||> List.exists isStringOption
-    let checkArrayOption = hasNull <||> List.exists isArrayOption
-    let checkObjectOption = hasNull <||> List.exists isObjectOption
-    let checkNumberOption = hasNull <||> List.exists isNumberOption
+    let checkStringOption = List.exists (isNull <||> isStringOption)
+    let checkArrayOption = List.exists (isNull <||> isArrayOption)
+    let checkObjectOption = List.exists (isNull <||> isObjectOption)
+    let checkNumberOption = List.exists (isNull <||> isNumberOption)
+    let checkBoolOption = List.exists (isNull <||> isBoolOption)
 
     let getOptionType istanceType isOption =
         match istanceType, isOption with
@@ -130,6 +131,9 @@ let rec aggreagateListToSingleType jsonList =
 
     | list when list |> List.forall (isString <||> isNull) ->
         getOptionType JString (list |> checkStringOption)
+    
+    | list when list |> List.forall (isBool <||> isNull) ->
+        getOptionType JBool (list |> checkBoolOption)
 
     | list when list |> List.forall (isObject <||> isNull) ->
         let getObjects = List.filter (not << isNull) >> List.map(function JObject list | JObjectOption list -> list)
@@ -164,36 +168,48 @@ let rec aggreagateListToSingleType jsonList =
 
     | _ -> JEmptyObjectOption
 
+
+  //let getType name =
+        //    function 
+        //    | JBool -> "bool"
+        //    | JBoolOption -> "bool option"
+        //    | JNull -> "object option"
+        //    | JInt -> "int"
+        //    | JIntOption -> "int option"
+        //    | JFloat -> "float"
+        //    | JFloatOption -> "float option"
+        //    | JString  -> "string"
+        //    | JStringOption -> "string option"            
+        //    | JEmptyObjectOption -> "Object option"
+        //    | JObject _ -> name
+        //    | JObjectOption _ -> name + " option"
+        //    | JArrayOption _ -> name + " option list"
+        //    | JList _ | JArray _ -> name + " list"
+
+        //let newType name = 
+        //     List.map(fun (x, y) -> x + ": " + getType x y)
+        //     >> List.map(fun x -> "\t" + x + "\n")                                  
+        //     >> List.reduce(+)
+        //     >> fun x -> name + "\n" + x
+        
+
 let rec test2 acc (nodes: (string * Json) list) = 
     match nodes with
     | [] -> acc
     | (objName, JObject list)::xs -> 
 
-        let getType name =
-            function 
-            | JString -> "string"
-            | JFloat -> "float"
-            | JBool -> "bool"
-            | JNull -> "object"
-            | JObject _ -> name
-            | JList [] -> "object list"
-            | JList _ -> name + " list"
-
-        let newType name = 
-             List.map(fun (x, y) -> x + ": " + getType x y)
-             >> List.map(fun x -> "\t" + x + "\n")                                  
-             >> List.reduce(+)
-             >> fun x -> name + "\n" + x
-        
+      
         let newNodes =
              List.map(fun (n, v) -> 
                       match v with 
                       | JObject list -> Some (n, JObject list)
-                      | JList list -> Some(n, aggreagateListToSingleType list)
+                      | JList list -> Some(n, JArray <| aggreagateListToSingleType list)
                       | _ -> None)
              >> List.choose(fun x -> x)
 
-        test2 ((newType objName list)::acc) (xs @ (newNodes list))
+        let test1 = list |> newNodes
+
+        test2 (acc @ test1) (xs @ (newNodes list))
     | _ -> acc
 
 [<EntryPoint>]
@@ -201,7 +217,7 @@ let main argv =
     
     let testExample = @"  {
              ""glossary"": {
-                ""ggfd"": [],
+                ""ggfd"": [{ ""age"": [ 2, null ] }],
                 ""name"": ""vlad"",
                 ""name2"": null,
                 ""aaa"": {
@@ -211,7 +227,7 @@ let main argv =
             }"
 
     match parseJsonString testExample with
-    | Success(result, _, _)   -> printfn "Success: %A" (test2 [] ["root", result])
+    | Success(result, _, _)   -> (test2 [] ["root", result]) |> List.iter(fun (name, v) -> printfn "%s %A" name v)
     | Failure(errorMsg, _, _) -> printfn "Failure: %s" errorMsg
 
     Console.ReadKey() |> ignore
