@@ -6,6 +6,11 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <Compile Include="Types.fs" />
+    <Compile Include="FSharp/FsharpCommon.fs" />
+    <Compile Include="FSharp/FsharpSimpleTypeHandler.fs" />
+    <Compile Include="FSharp/FsharpNewtonsoftHandler.fs" />
+    <Compile Include="JsonParser.fs" />
     <Compile Include="Program.fs" />
   </ItemGroup>
 

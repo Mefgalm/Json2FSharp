@@ -1,234 +1,55 @@
-﻿// Learn more about F# at http://fsharp.org
-
-open System
+﻿open System
 open FParsec
-open Newtonsoft.Json.Linq
+open Newtonsoft.Json
+open Microsoft.FSharp
+open Microsoft.FSharp.Reflection
+open JsonParser
+open Types
 
-type Json = 
-    | JBool
-    | JBoolOption
-    | JNull
-    | JInt
-    | JIntOption
-    | JFloat
-    | JFloatOption
-    | JString 
-    | JStringOption
-    | JList of Json list
-    | JEmptyObjectOption
-    | JObject of (string * Json) list
-    | JObjectOption of (string * Json) list
-    | JArray of Json
-    | JArrayOption of Json
 
-let ws = spaces 
-let str s = pstring s
-
-let stringLiteral =
-    let escape = anyOf "\"\\/bfnrt"
-                  |>> function
-                      | 'b' -> "\b"
-                      | 'f' -> "\u000C"
-                      | 'n' -> "\n"
-                      | 'r' -> "\r"
-                      | 't' -> "\t"
-                      | c   -> string c // every other char is mapped to itself
-
-    let unicodeEscape =
-        str "u" >>. pipe4 hex hex hex hex (fun h3 h2 h1 h0 ->
-            let hex2int c = (int c &&& 15) + (int c >>> 6)*9 // hex char to int
-            (hex2int h3)*4096 + (hex2int h2)*256 + (hex2int h1)*16 + hex2int h0
-            |> char |> string
-        )
-
-    between (str "\"") (str "\"")
-            (stringsSepBy (manySatisfy (fun c -> c <> '"' && c <> '\\'))
-                          (str "\\" >>. (escape <|> unicodeEscape)))
-
-let jstring = stringLiteral |>> (fun _ -> JString)
-
-let jnumber = pfloat |>> (fun _ -> JFloat)
-
-let jtrue  = stringReturn "true"  JBool
-let jfalse = stringReturn "false" JBool
-let jnull  = stringReturn "null" JNull
-
-let jvalue, jvalueRef = createParserForwardedToRef() 
-
-let listBetweenStrings sOpen sClose pElement f =
-    between (str sOpen) (str sClose)
-            (ws >>. sepBy (pElement .>> ws) (str "," .>> ws) |>> f)
-
-let keyValue = tuple2 stringLiteral (ws >>. str ":" >>. ws >>. jvalue)
-
-let jlist   = listBetweenStrings "[" "]" jvalue JList
-let jobject = listBetweenStrings "{" "}" keyValue JObject
-
-do jvalueRef := choice [jobject
-                        jlist
-                        jstring
-                        jnumber
-                        jtrue
-                        jnull
-                        jfalse]
-
-let json = ws >>. jvalue .>> ws .>> eof
-
-let parseJsonString str = run json str
-
-let rec aggreagateListToSingleType jsonList =
+type OptionConverter() =
+    inherit JsonConverter()
     
-    let (<||>) f1 f2 x = f1 x || f2 x
-    let (<&&>) f1 f2 x = f1 x && f2 x
+    override x.CanConvert(t) = 
+        t.IsGenericType && t.GetGenericTypeDefinition() = typedefof<option<_>>
 
-    let isArray = function JArray _ | JArrayOption _ -> true | _ -> false
-    let isList = function JList _ -> true | _ -> false
-    let isString = function JStringOption | JString -> true | _ -> false
-    let isNumber = function JInt | JFloat| JIntOption | JFloatOption -> true | _ -> false
-    let isNull = function JNull -> true | _ -> false
-    let isBool = function JBool | JBoolOption -> true | _ -> false
-    let isObject = function JObject _ | JObjectOption _ -> true | _ -> false
+    override x.WriteJson(writer, value, serializer) =
+        let value = 
+            if value = null then null
+            else 
+                let _,fields = FSharpValue.GetUnionFields(value, value.GetType())
+                fields.[0]  
+        serializer.Serialize(writer, value)
 
-    let isBoolOption = function JBoolOption -> true | _ -> false
-    let isStringOption = function JStringOption -> true | _ -> false
-    let isArrayOption = function JArrayOption _ -> true | _ -> false
-    let isObjectOption = function JObjectOption _ -> true | _ -> false
-    let isNumberOption = function JIntOption | JFloatOption -> true | _ -> false
-    let typeOrder = 
-        function 
-        | JInt | JIntOption -> 1 
-        | JFloat | JFloatOption -> 2
-        | _ -> failwith "Not number type"
-    
-    let checkStringOption = List.exists (isNull <||> isStringOption)
-    let checkArrayOption = List.exists (isNull <||> isArrayOption)
-    let checkObjectOption = List.exists (isNull <||> isObjectOption)
-    let checkNumberOption = List.exists (isNull <||> isNumberOption)
-    let checkBoolOption = List.exists (isNull <||> isBoolOption)
+    override x.ReadJson(reader, t, existingValue, serializer) =        
+        let innerType = t.GetGenericArguments().[0]
+        let innerType = 
+            if innerType.IsValueType then (typedefof<Nullable<_>>).MakeGenericType([|innerType|])
+            else innerType        
+        let value = serializer.Deserialize(reader, innerType)
+        let cases = FSharpType.GetUnionCases(t)
+        if value = null then FSharpValue.MakeUnion(cases.[0], [||])
+        else FSharpValue.MakeUnion(cases.[1], [|value|]) 
 
-    let getOptionType istanceType isOption =
-        match istanceType, isOption with
-        | JInt, true -> JIntOption
-        | JFloat, true -> JFloatOption
-        | JBool, true -> JBoolOption
-        | JString, true -> JStringOption
-        | JObject x, true -> JObjectOption x
-        | JArray x, true -> JArrayOption x
-        | x, _ -> x
-
-    match jsonList with
-    | [] -> JEmptyObjectOption
-    | list when list |> List.forall isNull -> JEmptyObjectOption
-    | list when list |> List.forall (isNumber <||> isNull) ->
-        let newType = 
-                list 
-                |> List.filter (not << isNull)
-                |> List.distinct
-                |> List.map(fun x -> (x, typeOrder x))
-                |> List.maxBy (fun (_, rank) -> rank)
-                |> fst
-        getOptionType newType (list |> checkNumberOption)
-
-    | list when list |> List.forall (isString <||> isNull) ->
-        getOptionType JString (list |> checkStringOption)
-    
-    | list when list |> List.forall (isBool <||> isNull) ->
-        getOptionType JBool (list |> checkBoolOption)
-
-    | list when list |> List.forall (isObject <||> isNull) ->
-        let getObjects = List.filter (not << isNull) >> List.map(function JObject list | JObjectOption list -> list)
-        let res = 
-            list 
-            |> getObjects
-            |> List.collect(fun x -> x)
-            |> List.groupBy(fun (key, _) -> key)
-            |> List.map(fun (key, value) -> (key, (aggreagateListToSingleType (value |> List.map snd))))
-        getOptionType (JObject res) (list |> checkObjectOption)
-
-    | list when list |> List.forall (isList <||> isNull) ->
-        let getLists = List.filter (not << isNull) >> List.map(fun (JList x) -> x)
-
-        let res =
-            list 
-            |> getLists
-            |> List.map aggreagateListToSingleType            
-            |> aggreagateListToSingleType
-            
-        getOptionType (JArray res) (list |> checkArrayOption)    
-
-    | list when list |> List.forall (isArray <||> isNull) ->
-        let getObjs = List.filter (not << isNull) >> List.map(function JArray list | JArrayOption list -> list)
-
-        let res =
-            list 
-            |> getObjs
-            |> aggreagateListToSingleType
-
-        getOptionType (JArray res) (list |> checkArrayOption)
-
-    | _ -> JEmptyObjectOption
-
-
-  //let getType name =
-        //    function 
-        //    | JBool -> "bool"
-        //    | JBoolOption -> "bool option"
-        //    | JNull -> "object option"
-        //    | JInt -> "int"
-        //    | JIntOption -> "int option"
-        //    | JFloat -> "float"
-        //    | JFloatOption -> "float option"
-        //    | JString  -> "string"
-        //    | JStringOption -> "string option"            
-        //    | JEmptyObjectOption -> "Object option"
-        //    | JObject _ -> name
-        //    | JObjectOption _ -> name + " option"
-        //    | JArrayOption _ -> name + " option list"
-        //    | JList _ | JArray _ -> name + " list"
-
-        //let newType name = 
-        //     List.map(fun (x, y) -> x + ": " + getType x y)
-        //     >> List.map(fun x -> "\t" + x + "\n")                                  
-        //     >> List.reduce(+)
-        //     >> fun x -> name + "\n" + x
-        
-
-let rec test2 acc (nodes: (string * Json) list) = 
-    match nodes with
-    | [] -> acc
-    | (objName, JObject list)::xs -> 
-
-      
-        let newNodes =
-             List.map(fun (n, v) -> 
-                      match v with 
-                      | JObject list -> Some (n, JObject list)
-                      | JList list -> Some(n, JArray <| aggreagateListToSingleType list)
-                      | _ -> None)
-             >> List.choose(fun x -> x)
-
-        let test1 = list |> newNodes
-
-        test2 (acc @ test1) (xs @ (newNodes list))
-    | _ -> acc
+   
+let generateRecords fileHandler typeHandler toView (str: string) =
+    match parseJsonString str with
+    | Success(result, _, _)   -> 
+        match castArray ["RootObject", result] with
+        | [x] -> printfn "%s" ^ (deep fileHandler typeHandler toView x)
+        | _ -> printfn "Failure"
+    | Failure(errorMsg, _, _) -> printfn "Failure: %s" errorMsg
 
 [<EntryPoint>]
 let main argv =
-    
-    let testExample = @"  {
-             ""glossary"": {
-                ""ggfd"": [{ ""age"": [ 2, null ] }],
-                ""name"": ""vlad"",
-                ""name2"": null,
-                ""aaa"": {
-                    ""test"": ""ttt""
-                }
-              }
-            }"
 
-    match parseJsonString testExample with
-    | Success(result, _, _)   -> (test2 [] ["root", result]) |> List.iter(fun (name, v) -> printfn "%s %A" name v)
-    | Failure(errorMsg, _, _) -> printfn "Failure: %s" errorMsg
+    let testExample = @"
+    {
+        ""employees"": [[{""name"": ""2012-04-23T18:25:43.511Z""}, {""name"": null} ]],
+        ""employees2"": [[{""name"": ""2012-04-23T18:25:43.511Z""}, {""name"": null} ]]    
+    }"
+
+    generateRecords (FsharpSimpleTypeHandler.fieldHandler FsharpCommon.listGenerator) FsharpSimpleTypeHandler.typeHandler FsharpSimpleTypeHandler.toView testExample
 
     Console.ReadKey() |> ignore
     0 // return an integer exit code
