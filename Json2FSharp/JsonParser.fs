@@ -154,7 +154,7 @@ let rec aggreagateListToSingleType jsonList =
         | x, _ -> x
 
     match jsonList with
-    | EmptyList -> JEmptyObjectOption
+    | EmptyList -> JEmptyObject
     | NullList -> JEmptyObjectOption
     | StringList list -> JString |> getOptionType (list |> checkStringOption)
     | DateTimeOffsetList list -> JDateTimeOffset |> getOptionType (list |> checkDateTimeOption)
@@ -193,14 +193,18 @@ let rec aggreagateListToSingleType jsonList =
             |> getOptionType (list |> checkArrayOption) 
     | _ -> JEmptyObjectOption
 
-let rec castArray = 
-     List.map(fun (key, value) ->
-                match value with
-                | JObject list -> key, JObject ^ castArray list
-                | JList list -> key, JArray ^ aggreagateListToSingleType list
-                | _ -> key, value)
+let private castArray json = 
+    let rec recCastArray json =
+         json 
+         |> List.map(fun (key, value) ->
+                     match value with
+                     | JObject list -> key, JObject ^ recCastArray list
+                     | JList list -> key, JArray ^ aggreagateListToSingleType list
+                     | _ -> key, value)   
+    
+    recCastArray json |> List.head
 
-let rec extractObject json =
+let rec private extractObject json =
     match json with
     | JArray obj 
     | JArrayOption obj -> extractObject obj
@@ -208,7 +212,32 @@ let rec extractObject json =
     | JObjectOption _  -> Some json
     | _ -> None
 
-let rec deep fieldHandler typeHandler toView node =
+let rec private fieldHandler collectionGenerator name = 
+    let getName { Name = name; Type = _ } = name
+
+    function
+    | JBool ->                  { Name = name; Type = "bool" }
+    | JBoolOption ->            { Name = name; Type = "bool option" }
+    | JNull ->                  { Name = name; Type = "Object option" } 
+    | JInt ->                   { Name = name; Type = "int64" }
+    | JIntOption ->             { Name = name; Type = "int64 option" }
+    | JFloat ->                 { Name = name; Type = "float"} 
+    | JFloatOption ->           { Name = name; Type = "float option" }
+    | JString ->                { Name = name; Type = "string" }
+    | JDateTimeOffset ->        { Name = name; Type = "DateTimeOffset" }
+    | JDateTimeOffsetOption ->  { Name = name; Type = "DateTimeOffset option" }
+    | JStringOption ->          { Name = name; Type = "string option" }
+    | JEmptyObjectOption ->     { Name = name; Type = "Object option" }
+    | JEmptyObject ->           { Name = name; Type = "Object" }
+    | JObject _ ->              { Name = name; Type = name }
+    | JObjectOption _ ->        { Name = name; Type = sprintf "%s %s" name "option" }
+    | JArray obj ->             { Name = name; Type = fieldHandler collectionGenerator name obj |> getName |> collectionGenerator }
+    | JArrayOption obj ->       { Name = name; Type = fieldHandler collectionGenerator name obj |> getName |> collectionGenerator }
+    | _ -> failwith "translateToString unexcpected"
+
+let typeHandler private name fields = { Name = name; Fields = fields }
+
+let buildTypes collectionGenerator json =
     let rec tailDeep acc jobjs =
         match jobjs with
         | [] -> acc
@@ -216,8 +245,8 @@ let rec deep fieldHandler typeHandler toView node =
         | (name, (JObjectOption list))::xs ->
             let newType = 
                 list
-                |> List.distinctBy (fun (name, _) -> name)
-                |> List.map (fun (key, value) -> fieldHandler key value)
+                |> List.distinctBy fst
+                |> List.map (fun (key, value) -> fieldHandler collectionGenerator key value)
                 |> fun x -> typeHandler name x
 
             let newJobjs = 
@@ -228,4 +257,9 @@ let rec deep fieldHandler typeHandler toView node =
             tailDeep (newType::acc) (newJobjs @ xs)
         | _ -> failwith "unexpected"
 
-    tailDeep [] [node] |> toView
+    tailDeep [] [castArray ["RootObject", json]]
+    //|> List.groupBy (fun x -> x.Name)
+    //|> List.map (snd >> function 
+    //                    | [x] -> [x] 
+    //                    | xs -> xs |> List.mapi (fun i (curType: Type) -> { curType with Name = (sprintf "%s%d" curType.Name i) })) 
+    //|> List.collect id

@@ -1,5 +1,17 @@
 ﻿module Types
 
+type Field =
+    { Name: string
+      Type: string }
+
+type Type =
+    { Name: string
+      Fields: Field list }
+
+type JsonResult<'a> =
+    | Ok of 'a
+    | Error of string
+
 type Json = 
     | JBool
     | JBoolOption
@@ -13,6 +25,7 @@ type Json =
     | JDateTimeOffsetOption
     | JStringOption
     | JList of Json list
+    | JEmptyObject
     | JEmptyObjectOption
     | JObject of (string * Json) list
     | JObjectOption of (string * Json) list

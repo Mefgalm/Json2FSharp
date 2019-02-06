@@ -31,25 +31,31 @@ type OptionConverter() =
         if value = null then FSharpValue.MakeUnion(cases.[0], [||])
         else FSharpValue.MakeUnion(cases.[1], [|value|]) 
 
-   
-let generateRecords fileHandler typeHandler toView (str: string) =
+let generateRecords collectionGenerator (str: string) =
     match parseJsonString str with
-    | Success(result, _, _)   -> 
-        match castArray ["RootObject", result] with
-        | [x] -> printfn "%s" ^ (deep fileHandler typeHandler toView x)
-        | _ -> printfn "Failure"
-    | Failure(errorMsg, _, _) -> printfn "Failure: %s" errorMsg
+    | Success(result, _, _) -> JsonResult.Ok ^ buildTypes collectionGenerator result        
+    | Failure(errorMsg, _, _) -> JsonResult.Error ^ errorMsg
+
+
 
 [<EntryPoint>]
 let main argv =
 
     let testExample = @"
     {
-        ""employees"": [[{""name"": ""2012-04-23T18:25:43.511Z""}, {""name"": null} ]],
-        ""employees2"": [[{""name"": ""2012-04-23T18:25:43.511Z""}, {""name"": null} ]]    
-    }"
+    ""test1"": {
+        ""Welcome"" : {}
+    },
+    ""test2"": {
+        ""Welcome"" : {}
+    }
+}"
 
-    generateRecords (FsharpSimpleTypeHandler.fieldHandler FsharpCommon.listGenerator) FsharpSimpleTypeHandler.typeHandler FsharpSimpleTypeHandler.toView testExample
+    printfn "%A" (generateRecords FsharpCommon.listGenerator testExample)
+
+    let output = (generateRecords FsharpCommon.listGenerator testExample) |> FsharpSimpleTypeHandler.toView
+
+    printfn "%s" output
 
     Console.ReadKey() |> ignore
     0 // return an integer exit code

@@ -3,39 +3,31 @@ module FsharpSimpleTypeHandler
 
 open Types
 
-type Field =
-    { Name: string
-      Type: string }
-
-type Type =
-    { Name: string
-      Fields: Field list }
-
 let private fixName = FsharpCommon.fixName
 
-let toView types = types |> List.map(fun x -> x.ToString()) |> List.fold(+) ""
+let private fieldToView (field: Field) = sprintf "%s: %s" (field.Name |> fixName) field.Type
 
-let typeHandler name fields = { Name = name |> fixName; Fields = fields }
+let private typeToView (typeDef: Type) =
+    match typeDef.Fields with
+    | [] -> sprintf "type %s = { }" typeDef.Name
+    | [x] -> sprintf "type %s = { %s }" typeDef.Name (fieldToView x)
+    | xs -> 
+        let head = sprintf "type %s =" (typeDef.Name |> fixName)
 
-let rec fieldHandler collectionGenerator name = 
-    let getName { Name = name; Type = _ } = name
+        let fieldBlock =
+            xs 
+            |> List.map fieldToView
+            |> List.mapi(fun i x -> 
+                            match i with
+                            | 0 -> sprintf "{ %s" x
+                            | index when index = typeDef.Fields.Length - 1 -> sprintf "  %s }" x
+                            | _ -> sprintf "  %s" x)
+            |> List.map (sprintf "\t%s")        
+            |> List.reduce (sprintf "%s\n%s")
 
-    function
-    | JBool ->                  { Name = name |> fixName; Type = "bool" }
-    | JBoolOption ->            { Name = name |> fixName; Type = "bool option" }
-    | JNull ->                  { Name = name |> fixName; Type = "Object option" } 
-    | JInt ->                   { Name = name |> fixName; Type = "int64" }
-    | JIntOption ->             { Name = name |> fixName; Type = "int64 option" }
-    | JFloat ->                 { Name = name |> fixName; Type = "float"} 
-    | JFloatOption ->           { Name = name |> fixName; Type = "float option" }
-    | JString ->                { Name = name |> fixName; Type = "string" }
-    | JDateTimeOffset ->        { Name = name |> fixName; Type = "DateTimeOffset" }
-    | JDateTimeOffsetOption ->  { Name = name |> fixName; Type = "DateTimeOffset option" }
-    | JStringOption ->          { Name = name |> fixName; Type = "string option" }
-    | JEmptyObjectOption ->     { Name = name |> fixName; Type = "Object option" }
-    | JObject _ ->              { Name = name |> fixName; Type = name }
-    | JObjectOption _ ->        { Name = name |> fixName; Type = sprintf "%s %s" name "option" }
-    | JArray obj ->             { Name = name |> fixName; Type = fieldHandler collectionGenerator name obj |> getName |> collectionGenerator }
-    | JArrayOption obj ->       { Name = name |> fixName; Type = fieldHandler collectionGenerator name obj |> getName |> collectionGenerator }
-    | _ -> failwith "translateToString unexcpected"
+        sprintf "%s\n%s" head fieldBlock
 
+let toView = 
+    function 
+    | Ok types -> types |> List.map typeToView |> List.reduce (sprintf "%s\n\n%s")
+    | Error msg -> msg
