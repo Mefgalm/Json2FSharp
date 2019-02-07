@@ -37,25 +37,29 @@ let generateRecords collectionGenerator (str: string) =
     | Failure(errorMsg, _, _) -> JsonResult.Error ^ errorMsg
 
 
+type Node = 
+    { Id: int
+      Name: string
+      Reference: string
+      RefId: int }
 
 [<EntryPoint>]
 let main argv =
 
     let testExample = @"
     {
-    ""test1"": {
-        ""Welcome"" : {}
-    },
-    ""test2"": {
-        ""Welcome"" : {}
-    }
-}"
-
-    printfn "%A" (generateRecords FsharpCommon.listGenerator testExample)
+        ""test1"": {
+            ""Welcome"" : {}
+        },
+        ""test2"": {
+            ""Welcome"" : { ""value"": 4 }
+        }
+    }"
 
     let output = (generateRecords FsharpCommon.listGenerator testExample) |> FsharpSimpleTypeHandler.toView
 
     printfn "%s" output
+
 
     Console.ReadKey() |> ignore
     0 // return an integer exit code

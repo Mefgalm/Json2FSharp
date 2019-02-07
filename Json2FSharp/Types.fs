@@ -1,11 +1,13 @@
 ﻿module Types
 
 type Field =
-    { Name: string
+    { TypeId: string option
+      Name: string
       Type: string }
 
 type Type =
-    { Name: string
+    { Id: string
+      Name: string
       Fields: Field list }
 
 type JsonResult<'a> =
