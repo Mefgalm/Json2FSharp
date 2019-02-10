@@ -31,17 +31,6 @@ type OptionConverter() =
         if value = null then FSharpValue.MakeUnion(cases.[0], [||])
         else FSharpValue.MakeUnion(cases.[1], [|value|]) 
 
-let generateRecords collectionGenerator (str: string) =
-    match parseJsonString str with
-    | Success(result, _, _) -> JsonResult.Ok ^ buildTypes collectionGenerator result        
-    | Failure(errorMsg, _, _) -> JsonResult.Error ^ errorMsg
-
-
-type Node = 
-    { Id: int
-      Name: string
-      Reference: string
-      RefId: int }
 
 [<EntryPoint>]
 let main argv =
@@ -56,10 +45,9 @@ let main argv =
         }
     }"
 
-    let output = (generateRecords FsharpCommon.listGenerator testExample) |> FsharpSimpleTypeHandler.toView
+    let output = (generateRecords FsharpCommon.fixName "Root" FsharpCommon.listGenerator testExample) |> FsharpSimpleTypeHandler.toView
 
     printfn "%s" output
-
 
     Console.ReadKey() |> ignore
     0 // return an integer exit code

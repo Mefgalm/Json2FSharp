@@ -212,88 +212,90 @@ let rec private extractObject json =
     | JObjectOption _  -> Some json
     | _ -> None
 
-let rec private fieldHandler collectionGenerator name = 
+let rec private fieldHandler fixName idGenerator collectionGenerator name = 
     let getName { Name = name; Type = _ } = name    
 
     function
-    | JBool ->                  { TypeId = None; Name = name; Type = "bool" }
-    | JBoolOption ->            { TypeId = None; Name = name; Type = "bool option" }
-    | JNull ->                  { TypeId = None; Name = name; Type = "Object option" } 
-    | JInt ->                   { TypeId = None; Name = name; Type = "int64" }
-    | JIntOption ->             { TypeId = None; Name = name; Type = "int64 option" }
-    | JFloat ->                 { TypeId = None; Name = name; Type = "float"} 
-    | JFloatOption ->           { TypeId = None; Name = name; Type = "float option" }
-    | JString ->                { TypeId = None; Name = name; Type = "string" }
-    | JDateTimeOffset ->        { TypeId = None; Name = name; Type = "DateTimeOffset" }
-    | JDateTimeOffsetOption ->  { TypeId = None; Name = name; Type = "DateTimeOffset option" }
-    | JStringOption ->          { TypeId = None; Name = name; Type = "string option" }
-    | JEmptyObjectOption ->     { TypeId = None; Name = name; Type = "Object option" }
-    | JEmptyObject ->           { TypeId = None; Name = name; Type = "Object" }
-    | JObject _ ->              { TypeId = Some ^ Guid.NewGuid().ToString(); Name = name; Type = name }
-    | JObjectOption _ ->        { TypeId = Some ^ Guid.NewGuid().ToString(); Name = name; Type = sprintf "%s %s" name "option" }
-    | JArray obj ->             { TypeId = Some ^ Guid.NewGuid().ToString(); Name = name; Type = fieldHandler collectionGenerator name obj |> getName |> collectionGenerator }
-    | JArrayOption obj ->       { TypeId = Some ^ Guid.NewGuid().ToString(); Name = name; Type = fieldHandler collectionGenerator name obj |> getName |> collectionGenerator }
+    | JBool ->                  { TypeId = None; Name = name |> fixName; Type = "bool" }
+    | JBoolOption ->            { TypeId = None; Name = name |> fixName; Type = "bool option" }
+    | JNull ->                  { TypeId = None; Name = name |> fixName; Type = "Object option" } 
+    | JInt ->                   { TypeId = None; Name = name |> fixName; Type = "int64" }
+    | JIntOption ->             { TypeId = None; Name = name |> fixName; Type = "int64 option" }
+    | JFloat ->                 { TypeId = None; Name = name |> fixName; Type = "float"} 
+    | JFloatOption ->           { TypeId = None; Name = name |> fixName; Type = "float option" }
+    | JString ->                { TypeId = None; Name = name |> fixName; Type = "string" }
+    | JDateTimeOffset ->        { TypeId = None; Name = name |> fixName; Type = "DateTimeOffset" }
+    | JDateTimeOffsetOption ->  { TypeId = None; Name = name |> fixName; Type = "DateTimeOffset option" }
+    | JStringOption ->          { TypeId = None; Name = name |> fixName; Type = "string option" }
+    | JEmptyObjectOption ->     { TypeId = None; Name = name |> fixName; Type = "Object option" }
+    | JEmptyObject ->           { TypeId = None; Name = name |> fixName; Type = "Object" }
+    | JObject _ ->              { TypeId = Some ^ idGenerator (); Name = name |> fixName; Type = name }
+    | JObjectOption _ ->        { TypeId = Some ^ idGenerator (); Name = name |> fixName; Type = sprintf "%s %s" name "option" }
+    | JArray obj ->             { TypeId = Some ^ idGenerator (); Name = name |> fixName; Type = fieldHandler fixName idGenerator collectionGenerator name obj |> getName |> collectionGenerator }
+    | JArrayOption obj ->       { TypeId = Some ^ idGenerator (); Name = name |> fixName; Type = fieldHandler fixName idGenerator collectionGenerator name obj |> getName |> collectionGenerator }
     | _ -> failwith "translateToString unexcpected"
 
-let private typeHandler (Some id) name fields = { Id = id; Name = name; Fields = fields }
+let private typeHandler fixName (Some id) name fields = { Id = id; Name = name |> fixName; Fields = fields }
 
 let public foldi fold first = List.fold(fun (prev,i) c -> (fold i prev c,i + 1)) (first,0) >> fst
 
 let compareType opt value = opt |> Option.map ((=) value) |> Option.fold (&&) true
 
-let private renameTypeAndFields curType newName types =    
-    let types = types |> List.map(fun (x: Type) -> if x = curType then { x with Name = newName } else x)
+let private generateUniqueNames nameGenerator =
+    List.groupBy(fun x -> x.Name)
+    >> List.map snd
+    >> List.map(function 
+                | [_] as list -> list 
+                | list -> list |> List.mapi (fun i x -> { x with Name = nameGenerator x.Name i }))
+    >> List.collect id
 
-    
-
-    types 
-    |> List.map(fun x -> { x with Fields = x.Fields 
-                                            |> List.map(fun f -> 
-                                                if compareType f.TypeId curType.Id then
-                                                    { f with Name = newName }
-                                                else 
-                                                    f) })        
-
-let buildTypes collectionGenerator json =
-    let rec tailDeep acc jobjs =
-        match jobjs with
-        | [] -> acc
-        | (name, id, (JObject list))::xs 
-        | (name, id, (JObjectOption list))::xs ->
-            let newType = 
-                list
-                |> List.distinctBy fst
-                |> List.map (fun (key, value) -> fieldHandler collectionGenerator key value, value)
-
-            let newJobjs = 
-                newType 
-                |> List.map(fun (field, json) -> (field.Name, field.TypeId, extractObject json))
-                |> List.choose(fun (key, id, v) -> match v with Some j -> Some (key, id, j) | None -> None)
-             
-            tailDeep ((typeHandler id name (newType |> List.map fst))::acc) (newJobjs @ xs)
-        | _ -> failwith "unexpected"
-
-    let types =
-        tailDeep [] [castArray ["RootObject", json] |> fun (x, y) -> (x, Some ^ Guid.NewGuid().ToString(), y)]
-        |> List.groupBy (fun x -> x.Name, x.Fields)
-        |> List.map snd
-        |> List.collect id
-
-    let makeAllNameUnique =
-        types
-        |> List.groupBy(fun x -> x.Name)
-        |> List.map snd
-        |> List.map(function 
-                    | [_] as list -> list 
-                    | list -> list |> List.mapi (fun i x -> { x with Name = sprintf "%s%d" x.Name i }))
-        |> List.collect id
-
-    makeAllNameUnique
-    |> List.map(fun x ->
+let private renameAllField types =
+    types |> List.map(fun x ->
                     { x with Fields = 
                                 x.Fields 
                                 |> List.map (fun field -> 
-                                             match  makeAllNameUnique |> List.tryFind(fun q -> compareType field.TypeId q.Id) with
+                                             match  types |> List.tryFind(fun q -> compareType field.TypeId q.Id) with
                                              | None -> field
                                              | Some value -> { field with Name = value.Name }) })
 
+let private distinctType =
+    List.groupBy (fun x -> x.Name, x.Fields)
+    >> List.map snd
+    >> List.collect id
+
+let private idGenerator () = Guid.NewGuid().ToString();
+                                            
+let private buildTypes rootObjectName fixName collectionGenerator json =
+    match rootObjectName with
+    | "" -> JsonResult.Error "Roob object should be not empty"
+    | rootObjectName ->
+        let rec tailDeep acc jobjs =
+            match jobjs with
+            | [] -> acc
+            | (name, id, (JObject list))::xs 
+            | (name, id, (JObjectOption list))::xs ->
+                let newType = 
+                    list
+                    |> List.distinctBy fst
+                    |> List.map (fun (key, value) -> fieldHandler fixName idGenerator collectionGenerator key value, value)
+
+                let newJobjs = 
+                    newType 
+                    |> List.map(fun (field, json) -> (field.Name, field.TypeId, extractObject json))
+                    |> List.choose(fun (key, id, v) -> match v with Some j -> Some (key, id, j) | None -> None)
+             
+                tailDeep ((typeHandler fixName id name (newType |> List.map fst))::acc) (newJobjs @ xs)
+            | _ -> failwith "unexpected"
+
+        let types = tailDeep [] [castArray [rootObjectName |> fixName, json] |> fun (x, y) -> (x, Some ^ Guid.NewGuid().ToString(), y)]
+
+        types 
+        |> distinctType
+        |> generateUniqueNames (sprintf "%s%d")
+        |> renameAllField
+        |> JsonResult.Ok
+
+let generateRecords fixName rootObjectName collectionGenerator (str: string) =
+    match parseJsonString str with
+    | Success(result, _, _) -> buildTypes rootObjectName fixName collectionGenerator result        
+    | Failure(errorMsg, _, _) -> JsonResult.Error ^ errorMsg
