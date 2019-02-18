@@ -5,7 +5,7 @@ open Types
 
 let private fixName = FsharpCommon.fixName
 
-let private fieldToView (field: Field) = sprintf "%s: %s" (field.Name |> fixName) field.Type
+let private fieldToView (field: Field) = sprintf "%s: %s" (field.Name |> fixName) (field.Template.Replace("%s", field.Type))
 
 let private typeToView (typeDef: Type) =
     match typeDef.Fields with

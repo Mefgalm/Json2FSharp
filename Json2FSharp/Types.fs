@@ -3,7 +3,8 @@
 type Field =
     { TypeId: string option
       Name: string
-      Type: string }
+      Type: string
+      Template: string }
 
 type Type =
     { Id: string
